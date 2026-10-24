@@ -1,854 +1,587 @@
 -- OCULTAR SCRIPTS
 -- Criador: angel
--- Logo redonda arrastável -> toque para abrir o menu (arrastável, sem bloquear a tela).
 
 local Players = game:GetService("Players")
-local UIS = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local TAG = "OCS_UI"
 local FAR = UDim2.new(10, 0, 10, 0)
-local CAMO = 0.92        -- transparência mínima no modo camuflar
-local CAMO_STEP = 150    -- elementos reaplicados por frame no modo camuflar
 
--- limpa execuções anteriores (restaura e desconecta)
+-- janela do tutorial do jogo
+local TUTORIAL_GUI = "TutorialGui"
+local MAIN_NAME = "Main"
+local BG_NAME = "Background"
+
+-- posicao e altura do painel (fracao da altura do Background)
+local PANEL_GAP = 0.05
+local PANEL_HEIGHT = 0.42
+
+-- o que vai ser ocultado (nomes em minusculo)
+local DRIP_PREFIX = { "windui" }
+local DRIP_CONTAINS = { "drip" }
+local EXTRA_NAMES = {} -- ex: { ["MeuMenu"] = true }
+
+local GREEN = Color3.fromRGB(46, 160, 110)
+local RED = Color3.fromRGB(200, 60, 70)
+local GREY = Color3.fromRGB(90, 90, 110)
+local WHITE = Color3.new(1, 1, 1)
+
+-- limpa execucao anterior
 local env = (typeof(getgenv) == "function" and getgenv()) or _G
 if env.__OCS_CLEAN then pcall(env.__OCS_CLEAN) end
 if env.__AOCULT_CLEAN then pcall(env.__AOCULT_CLEAN) end
 
----------------------------------------------------------------------
--- Contêineres
----------------------------------------------------------------------
-local function getParents()
-	local list = {}
-	if typeof(gethui) == "function" then
-		local ok, h = pcall(gethui)
-		if ok and h then table.insert(list, h) end
-	end
-	table.insert(list, CoreGui)
-	local lp = Players.LocalPlayer
-	local pg = lp and lp:FindFirstChildOfClass("PlayerGui")
-	if pg then table.insert(list, pg) end
-	return list
+local function getHui()
+        if typeof(gethui) == "function" then
+                local ok, h = pcall(gethui)
+                if ok and typeof(h) == "Instance" then return h end
+        end
+        return nil
 end
 
--- onde ficam os menus de scripts (nunca o PlayerGui do jogo)
 local function getExecRoots()
-	local list, seen = {}, {}
-	local function add(r)
-		if r and not seen[r] then
-			seen[r] = true
-			table.insert(list, r)
-		end
-	end
-	if typeof(gethui) == "function" then
-		local ok, h = pcall(gethui)
-		if ok then add(h) end
-	end
-	add(CoreGui)
-	return list
+        local list, seen = {}, {}
+        local function add(r)
+                if r and not seen[r] then
+                        seen[r] = true
+                        table.insert(list, r)
+                end
+        end
+        add(getHui())
+        add(CoreGui)
+        return list
 end
 
-for _, p in ipairs(getParents()) do
-	pcall(function()
-		for _, c in ipairs(p:GetChildren()) do
-			if c:GetAttribute(TAG) then c:Destroy() end
-		end
-	end)
+local function getPlayerGui()
+        local lp = Players.LocalPlayer
+        return lp and lp:FindFirstChildOfClass("PlayerGui")
 end
 
----------------------------------------------------------------------
--- Helpers de interface
----------------------------------------------------------------------
-local conns = {}
-local function track(c) table.insert(conns, c) return c end
-
-local function tw(inst, props, dur, style, dir)
-	local t = TweenService:Create(
-		inst,
-		TweenInfo.new(dur, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out),
-		props
-	)
-	t:Play()
-	return t
+-- apaga sobra de versoes antigas
+do
+        local parents = {}
+        local h = getHui()
+        if h then table.insert(parents, h) end
+        table.insert(parents, CoreGui)
+        local pg = getPlayerGui()
+        if pg then table.insert(parents, pg) end
+        for _, p in ipairs(parents) do
+                pcall(function()
+                        for _, c in ipairs(p:GetChildren()) do
+                                if c:GetAttribute(TAG) then c:Destroy() end
+                        end
+                end)
+        end
+        if pg then
+                pcall(function()
+                        local tg = pg:FindFirstChild(TUTORIAL_GUI)
+                        if tg then
+                                for _, d in ipairs(tg:GetDescendants()) do
+                                        if d:GetAttribute(TAG) then d:Destroy() end
+                                end
+                        end
+                end)
+        end
 end
 
-local function corner(o, r)
-	local c = Instance.new("UICorner")
-	c.CornerRadius = r
-	c.Parent = o
-	return c
-end
-
-local function stroke(o, color, th)
-	local s = Instance.new("UIStroke")
-	s.Color = color
-	s.Thickness = th
-	s.Parent = o
-	return s
-end
-
-local function label(parent, text, pos, size, ts, color, font)
-	local l = Instance.new("TextLabel")
-	l.BackgroundTransparency = 1
-	l.Text = text
-	l.Position = pos
-	l.Size = size
-	l.TextSize = ts
-	l.TextColor3 = color
-	l.Font = font or Enum.Font.Gotham
-	l.TextWrapped = true
-	l.Parent = parent
-	return l
-end
-
-local function button(parent, text, pos, size, bg, ts)
-	local b = Instance.new("TextButton")
-	b.Text = text
-	b.Position = pos
-	b.Size = size
-	b.BackgroundColor3 = bg
-	b.BorderSizePixel = 0
-	b.TextColor3 = Color3.new(1, 1, 1)
-	b.Font = Enum.Font.GothamBold
-	b.TextSize = ts
-	b.AutoButtonColor = false
-	b.Parent = parent
-	corner(b, UDim.new(0, 8))
-	return b
-end
-
--- efeito de toque (afunda levemente e volta suave)
-local function pressable(b)
-	local sc = Instance.new("UIScale")
-	sc.Parent = b
-	track(b.MouseButton1Down:Connect(function()
-		tw(sc, { Scale = 0.95 }, 0.08, Enum.EasingStyle.Quad)
-	end))
-	local function up()
-		tw(sc, { Scale = 1 }, 0.25, Enum.EasingStyle.Back)
-	end
-	track(b.MouseButton1Up:Connect(up))
-	track(b.MouseLeave:Connect(up))
-end
-
----------------------------------------------------------------------
--- Interface
----------------------------------------------------------------------
-local gui = Instance.new("ScreenGui")
-gui.Name = tostring(math.random(100000, 999999))
-gui:SetAttribute(TAG, true)
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.DisplayOrder = 2147483647
-gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-for _, p in ipairs(getParents()) do
-	local ok = pcall(function() gui.Parent = p end)
-	if ok and gui.Parent == p then break end
-end
-
-local function isOurs(d)
-	return d == gui or d:IsDescendantOf(gui)
-end
-
-local BG = Color3.fromRGB(16, 16, 24)
-local ACCENT = Color3.fromRGB(124, 77, 255)
-local ACCENT_DARK = Color3.fromRGB(46, 41, 76)
-local OK_GREEN = Color3.fromRGB(46, 160, 110)
-local TXT = Color3.fromRGB(235, 232, 255)
-local TXT_DIM = Color3.fromRGB(150, 148, 175)
-local WARN = Color3.fromRGB(255, 196, 92)
-
--- logo redonda
-local logo = Instance.new("Frame")
-logo.Name = "Logo"
-logo.Size = UDim2.new(0, 54, 0, 54)
-logo.Position = UDim2.new(0, 12, 0.35, 0)
-logo.BackgroundColor3 = BG
-logo.BorderSizePixel = 0
-logo.ClipsDescendants = true
-logo.ZIndex = 5
-logo.Parent = gui
-corner(logo, UDim.new(1, 0))
-local logoStroke = stroke(logo, ACCENT, 2)
-local logoScale = Instance.new("UIScale")
-logoScale.Parent = logo
-
-local glyph = label(logo, "S", UDim2.new(0, 0, 0, 0), UDim2.new(1, 0, 1, 0), 26, TXT, Enum.Font.GothamBlack)
-glyph.TextWrapped = false
-
-local logoImg = Instance.new("ImageLabel")
-logoImg.Size = UDim2.new(1, -6, 1, -6)
-logoImg.Position = UDim2.new(0, 3, 0, 3)
-logoImg.BackgroundTransparency = 1
-logoImg.Visible = false
-logoImg.Parent = logo
-corner(logoImg, UDim.new(1, 0))
-
-local hit = Instance.new("TextButton")
-hit.Size = UDim2.new(1, 0, 1, 0)
-hit.BackgroundTransparency = 1
-hit.Text = ""
-hit.ZIndex = 10
-hit.Parent = logo
-
--- cartão do menu (CanvasGroup = fade suave de tudo junto)
-local MW, MH = 236, 240
-local cardPos = UDim2.new(0.5, 0, 0.5, 0) -- posição "base" do menu (muda ao arrastar)
-local card = Instance.new("CanvasGroup")
-card.Name = "Menu"
-card.AnchorPoint = Vector2.new(0.5, 0.5)
-card.Position = cardPos
-card.Size = UDim2.new(0, MW, 0, MH)
-card.BackgroundColor3 = BG
-card.BorderSizePixel = 0
-card.GroupTransparency = 1
-card.Visible = false
-card.ZIndex = 10
-card.Parent = gui
-corner(card, UDim.new(0, 14))
-local cardStroke = stroke(card, ACCENT, 1.5)
-cardStroke.Transparency = 1
-local cardScale = Instance.new("UIScale")
-cardScale.Scale = 0.86
-cardScale.Parent = card
-
-local title = label(card, "Ocultar scripts", UDim2.new(0, 14, 0, 10), UDim2.new(1, -56, 0, 20), 16, TXT, Enum.Font.GothamBold)
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.TextWrapped = false
-
-local subtitle = label(card, "Esconde os menus de scripts da tela", UDim2.new(0, 14, 0, 30), UDim2.new(1, -28, 0, 14), 10, TXT_DIM)
-subtitle.TextXAlignment = Enum.TextXAlignment.Left
-subtitle.TextWrapped = false
-
--- área de arrastar o menu (topo do cartão, sem cobrir o botão de fechar)
-local dragHandle = Instance.new("TextButton")
-dragHandle.Name = "DragHandle"
-dragHandle.Size = UDim2.new(1, -46, 0, 50)
-dragHandle.Position = UDim2.new(0, 0, 0, 0)
-dragHandle.BackgroundTransparency = 1
-dragHandle.Text = ""
-dragHandle.AutoButtonColor = false
-dragHandle.ZIndex = 12
-dragHandle.Parent = card
-
-local closeBtn = button(card, "x", UDim2.new(1, -36, 0, 10), UDim2.new(0, 24, 0, 24), ACCENT_DARK, 13)
-pressable(closeBtn)
-
-local line = Instance.new("Frame")
-line.Size = UDim2.new(1, -28, 0, 1)
-line.Position = UDim2.new(0, 14, 0, 52)
-line.BackgroundColor3 = ACCENT_DARK
-line.BorderSizePixel = 0
-line.Parent = card
-
-local toggleBtn = button(card, "Ocultar", UDim2.new(0, 14, 0, 62), UDim2.new(1, -28, 0, 36), ACCENT, 14)
-pressable(toggleBtn)
-
-local modeLbl = label(card, "Modo", UDim2.new(0, 16, 0, 106), UDim2.new(1, -32, 0, 14), 11, TXT_DIM, Enum.Font.GothamBold)
-modeLbl.TextXAlignment = Enum.TextXAlignment.Left
-
-local modeBtn = button(card, "Remover da tela", UDim2.new(0, 14, 0, 122), UDim2.new(1, -28, 0, 30), ACCENT_DARK, 12)
-modeBtn.TextXAlignment = Enum.TextXAlignment.Left
-local pad = Instance.new("UIPadding")
-pad.PaddingLeft = UDim.new(0, 10)
-pad.Parent = modeBtn
-pressable(modeBtn)
-
-local arrow = label(modeBtn, "v", UDim2.new(1, -26, 0, 0), UDim2.new(0, 20, 1, 0), 12, TXT, Enum.Font.GothamBold)
-arrow.TextWrapped = false
-
-local statusLbl = label(card, "Procurando scripts...", UDim2.new(0, 16, 0, 158), UDim2.new(1, -32, 0, 28), 10, TXT_DIM)
-statusLbl.TextXAlignment = Enum.TextXAlignment.Left
-statusLbl.TextYAlignment = Enum.TextYAlignment.Top
-
-local warning = label(card, "(Cuidado para não perder os scripts)", UDim2.new(0, 16, 1, -40), UDim2.new(1, -32, 0, 14), 10, WARN)
-warning.TextXAlignment = Enum.TextXAlignment.Right
-warning.TextWrapped = false
-
-local credits = label(card, "Criador: angel", UDim2.new(0, 16, 1, -22), UDim2.new(1, -32, 0, 14), 10, Color3.fromRGB(120, 118, 150))
-credits.TextXAlignment = Enum.TextXAlignment.Right
-
--- lista do dropdown (abre com animação)
-local list = Instance.new("Frame")
-list.Size = UDim2.new(1, -28, 0, 0)
-list.Position = UDim2.new(0, 14, 0, 156)
-list.BackgroundColor3 = Color3.fromRGB(26, 24, 42)
-list.BorderSizePixel = 0
-list.ClipsDescendants = true
-list.Visible = false
-list.ZIndex = 20
-list.Parent = card
-corner(list, UDim.new(0, 8))
-stroke(list, ACCENT, 1)
-
-local optRemover = button(list, "Remover da tela", UDim2.new(0, 3, 0, 3), UDim2.new(1, -6, 0, 24), ACCENT, 12)
-local optCamo = button(list, "Camuflar (opacidade baixa)", UDim2.new(0, 3, 0, 29), UDim2.new(1, -6, 0, 24), ACCENT_DARK, 12)
-optRemover.ZIndex = 21
-optCamo.ZIndex = 21
-pressable(optRemover)
-pressable(optCamo)
-
----------------------------------------------------------------------
--- Animações do menu (sem fundo escuro, sem bloquear cliques)
----------------------------------------------------------------------
-local listOpen = false
-
-local function closeListInstant()
-	listOpen = false
-	list.Visible = false
-	list.Size = UDim2.new(1, -28, 0, 0)
-	arrow.Rotation = 0
-end
-
-local function setList(open)
-	if open == listOpen then return end
-	listOpen = open
-	if open then
-		list.Visible = true
-		tw(list, { Size = UDim2.new(1, -28, 0, 56) }, 0.28)
-		tw(arrow, { Rotation = 180 }, 0.28)
-	else
-		tw(arrow, { Rotation = 0 }, 0.2)
-		tw(list, { Size = UDim2.new(1, -28, 0, 0) }, 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-		task.delay(0.22, function()
-			if not listOpen then list.Visible = false end
-		end)
-	end
-end
-
-local menuOpen = false
-local menuToken = 0
-local cardPosTween = nil
-
-local function offsetPos(p, dy)
-	return UDim2.new(p.X.Scale, p.X.Offset, p.Y.Scale, p.Y.Offset + dy)
-end
-
-local function openMenu()
-	if menuOpen then return end
-	menuOpen = true
-	menuToken += 1
-
-	card.Visible = true
-	cardScale.Scale = 0.86
-	card.GroupTransparency = 1
-	card.Position = offsetPos(cardPos, 18)
-	cardStroke.Transparency = 1
-
-	cardPosTween = tw(card, { Position = cardPos }, 0.42, Enum.EasingStyle.Quint)
-	tw(card, { GroupTransparency = 0 }, 0.42, Enum.EasingStyle.Quint)
-	tw(cardScale, { Scale = 1 }, 0.5, Enum.EasingStyle.Back)
-	tw(cardStroke, { Transparency = 0 }, 0.4, Enum.EasingStyle.Sine)
-end
-
-local function closeMenu()
-	if not menuOpen then return end
-	menuOpen = false
-	menuToken += 1
-	local token = menuToken
-
-	closeListInstant()
-	cardPosTween = tw(card, { Position = offsetPos(cardPos, 12) }, 0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-	tw(card, { GroupTransparency = 1 }, 0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-	tw(cardScale, { Scale = 0.92 }, 0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-	tw(cardStroke, { Transparency = 1 }, 0.2, Enum.EasingStyle.Sine)
-
-	task.delay(0.28, function()
-		if menuToken == token and not menuOpen then
-			card.Visible = false
-		end
-	end)
-end
-
-local function toggleMenu()
-	if menuOpen then closeMenu() else openMenu() end
-end
-
-track(closeBtn.MouseButton1Click:Connect(closeMenu))
-
----------------------------------------------------------------------
--- Arrastar (logo e menu). Toque curto na logo abre/fecha o menu.
----------------------------------------------------------------------
-local function makeDraggable(handle, target, opts)
-	opts = opts or {}
-	local dragging, moved, dragInput, dragStart, startPos = false, false, nil, nil, nil
-
-	track(handle.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
-			dragging, moved, dragInput = true, false, input
-			dragStart = input.Position
-			startPos = opts.getStart and opts.getStart() or target.Position
-			if opts.onDown then opts.onDown() end
-			input.Changed:Connect(function()
-				if input.UserInputState == Enum.UserInputState.End then
-					if opts.onUp then opts.onUp() end
-					if dragging and not moved and opts.onTap then opts.onTap() end
-					dragging = false
-				end
-			end)
-		end
-	end))
-
-	track(UIS.InputChanged:Connect(function(input)
-		if not dragging then return end
-		if input == dragInput or input.UserInputType == Enum.UserInputType.MouseMovement then
-			local d = input.Position - dragStart
-			if d.Magnitude > 6 then moved = true end
-			if moved then
-				local np = UDim2.new(
-					startPos.X.Scale, startPos.X.Offset + d.X,
-					startPos.Y.Scale, startPos.Y.Offset + d.Y
-				)
-				target.Position = np
-				if opts.onMove then opts.onMove(np) end
-			end
-		end
-	end))
-end
-
--- logo
-makeDraggable(hit, logo, {
-	onDown = function() tw(logoScale, { Scale = 0.9 }, 0.1, Enum.EasingStyle.Quad) end,
-	onUp = function() tw(logoScale, { Scale = 1 }, 0.3, Enum.EasingStyle.Back) end,
-	onTap = toggleMenu,
-})
-
--- menu (arrasta pelo topo)
-makeDraggable(dragHandle, card, {
-	getStart = function() return cardPos end,
-	onDown = function()
-		if cardPosTween then pcall(function() cardPosTween:Cancel() end) end
-	end,
-	onMove = function(np) cardPos = np end,
-})
-
----------------------------------------------------------------------
--- Detecção dos menus de scripts
--- Tudo que fica nos contêineres do executor (gethui / CoreGui) e NÃO é
--- do próprio Roblox. O PlayerGui do jogo nunca é tocado.
----------------------------------------------------------------------
+-- guis do proprio roblox, nao mexe
 local ROBLOX_EXACT = {
-	RobloxGui = true, TopBarApp = true, TopBar = true, PlayerList = true,
-	Chat = true, ExperienceChat = true, BubbleChat = true,
-	PurchasePromptApp = true, ThemeProvider = true, DevConsoleMaster = true,
-	VoiceChat = true, TeleportGui = true, TeleportEffectGui = true,
-	ImmersiveBrandedAds = true, CaptureOverlay = true, ScreenshotsCarousel = true,
-	CaptureManager = true, ShortcutBar = true, drawingDirectory = true,
-	_FullscreenTestGui = true, _DeviceTestGui = true, SystemScrim = true,
-	RewardedVideoAdPlayer = true, MomentsCreationFlow = true,
+        RobloxGui = true, TopBarApp = true, TopBar = true, PlayerList = true,
+        Chat = true, ExperienceChat = true, BubbleChat = true,
+        PurchasePromptApp = true, ThemeProvider = true, DevConsoleMaster = true,
+        VoiceChat = true, TeleportGui = true, TeleportEffectGui = true,
+        ImmersiveBrandedAds = true, CaptureOverlay = true, ScreenshotsCarousel = true,
+        CaptureManager = true, ShortcutBar = true, drawingDirectory = true,
+        _FullscreenTestGui = true, _DeviceTestGui = true, SystemScrim = true,
+        RewardedVideoAdPlayer = true, MomentsCreationFlow = true,
 }
 local ROBLOX_PREFIX = { "Roblox", "InExperience", "HeadsetDisconnected", "Foundation" }
 
 local function isRobloxName(n)
-	if ROBLOX_EXACT[n] then return true end
-	for _, p in ipairs(ROBLOX_PREFIX) do
-		if n:sub(1, #p) == p then return true end
-	end
-	return false
+        if ROBLOX_EXACT[n] then return true end
+        for _, p in ipairs(ROBLOX_PREFIX) do
+                if n:sub(1, #p) == p then return true end
+        end
+        return false
 end
 
 local function garbled(name)
-	return name:find("[^\32-\126]") ~= nil
+        return name:find("[^\32-\126]") ~= nil
 end
 
--- (não inclui este script; ele é adicionado manualmente na hora de ocultar)
-local function shouldHide(sg)
-	if not sg:IsA("ScreenGui") or isOurs(sg) or isRobloxName(sg.Name) then return false end
-	local ok, kids = pcall(function() return sg:GetChildren() end)
-	return ok and #kids > 0
+-- no arceus o gethui fica dentro de um screengui do coregui, esse nao pode sumir inteiro
+local function isHolder(sg, hui)
+        return hui ~= nil and (hui == sg or hui:IsDescendantOf(sg))
 end
 
--- para GUIs novas no CoreGui exige cara de script (nome aleatório / ordem altíssima)
-local function shouldHideNew(root, sg)
-	if not shouldHide(sg) then return false end
-	if root ~= CoreGui then return true end
-	local n = sg.Name
-	local okO, ord = pcall(function() return sg.DisplayOrder end)
-	local randomLike = #n <= 10 and n:find("%d") ~= nil and n:find("%a") ~= nil
-	return garbled(n) or randomLike or (okO and type(ord) == "number" and ord >= 1000000000)
-end
-
-local function findScripts()
-	local found = {}
-	for _, root in ipairs(getExecRoots()) do
-		local ok, kids = pcall(function() return root:GetChildren() end)
-		if ok then
-			for _, sg in ipairs(kids) do
-				local okA, res = pcall(shouldHide, sg)
-				if okA and res then table.insert(found, sg) end
-			end
-		end
-	end
-	return found
+local function nameMatches(name)
+        if EXTRA_NAMES[name] then return true end
+        local l = name:lower()
+        for _, p in ipairs(DRIP_PREFIX) do
+                if l:sub(1, #p) == p then return true end
+        end
+        for _, p in ipairs(DRIP_CONTAINS) do
+                if l:find(p, 1, true) then return true end
+        end
+        return false
 end
 
 local function hasArceus(s)
-	return type(s) == "string" and s:lower():find("arceus", 1, true) ~= nil
+        return type(s) == "string" and s:lower():find("arceus", 1, true) ~= nil
 end
 
 local function hasArceusContent(sg)
-	local ok, desc = pcall(function() return sg:GetDescendants() end)
-	if not ok then return false end
-	for i, d in ipairs(desc) do
-		local okN, found = pcall(function()
-			if hasArceus(d.Name) then return true end
-			if (d:IsA("TextLabel") or d:IsA("TextButton")) and hasArceus(d.Text) then return true end
-			return false
-		end)
-		if okN and found then return true end
-		if i % 1500 == 0 then task.wait() end
-	end
-	return false
+        local ok, desc = pcall(function() return sg:GetDescendants() end)
+        if not ok then return false end
+        for i, d in ipairs(desc) do
+                local okN, found = pcall(function()
+                        if hasArceus(d.Name) then return true end
+                        if (d:IsA("TextLabel") or d:IsA("TextButton")) and hasArceus(d.Text) then return true end
+                        return false
+                end)
+                if okN and found then return true end
+                if i % 1500 == 0 then task.wait() end
+        end
+        return false
 end
 
--- tenta usar a imagem real da logo do Arceus na logo redonda
-local function findLogoImage(sgs)
-	local counts, cands = {}, {}
-	for _, sg in ipairs(sgs) do
-		local ok, desc = pcall(function() return sg:GetDescendants() end)
-		if ok then
-			for i, d in ipairs(desc) do
-				if d:IsA("ImageLabel") or d:IsA("ImageButton") then
-					local okI, img = pcall(function() return d.Image end)
-					if okI and type(img) == "string" and img ~= "" then
-						counts[img] = (counts[img] or 0) + 1
-						table.insert(cands, { d = d, img = img, sg = sg })
-					end
-				end
-				if i % 1500 == 0 then task.wait() end
-			end
-		end
-	end
+local arcCache = setmetatable({}, { __mode = "k" })
 
-	local cam = workspace.CurrentCamera
-	local vp = cam and cam.ViewportSize or Vector2.new(960, 480)
-	local best, bestScore = nil, 4
-
-	for _, c in ipairs(cands) do
-		if counts[c.img] == 1 then
-			local d = c.d
-			local ok, sc = pcall(function()
-				local s, p = d.AbsoluteSize, d.AbsolutePosition
-				if s.X < 30 or s.Y < 30 or s.X > 300 or s.Y > 300 then return 0 end
-				local ratio = s.X / s.Y
-				if ratio < 0.85 or ratio > 1.2 then return 0 end
-				local depth, x = 0, d
-				while x.Parent and x.Parent ~= c.sg do
-					depth += 1
-					x = x.Parent
-				end
-				local score = 0
-				if d:IsA("ImageButton") then score += 3 end
-				if depth <= 1 then score += 2 elseif depth <= 3 then score += 1 end
-				if p.X < vp.X * 0.06 or (vp.X - (p.X + s.X)) < vp.X * 0.06 then score += 2 end
-				if d.Visible then score += 1 end
-				return score
-			end)
-			if ok and sc > bestScore then
-				best, bestScore = d, sc
-			end
-		end
-	end
-
-	if best then
-		local ok = pcall(function()
-			logoImg.Image = best.Image
-			logoImg.ImageRectOffset = best.ImageRectOffset
-			logoImg.ImageRectSize = best.ImageRectSize
-			logoImg.Visible = true
-			glyph.Visible = false
-		end)
-		if not ok then
-			logoImg.Visible = false
-			glyph.Visible = true
-		end
-	end
+local function isArceus(sg, allowScan)
+        local c = arcCache[sg]
+        if c ~= nil then return c end
+        -- nome estranho + display order gigante
+        local okO, ord = pcall(function() return sg.DisplayOrder end)
+        if garbled(sg.Name) and okO and type(ord) == "number" and ord >= 1000000000 then
+                arcCache[sg] = true
+                return true
+        end
+        if not allowScan then return false end
+        local res = hasArceusContent(sg)
+        arcCache[sg] = res
+        return res
 end
 
----------------------------------------------------------------------
--- Motor de ocultação
----------------------------------------------------------------------
-local mode = "remover" -- "remover" | "camuflar"
+local function isTarget(sg, allowScan)
+        if nameMatches(sg.Name) then return true end
+        return isArceus(sg, allowScan)
+end
+
+local function findTargets()
+        local found, seen = {}, {}
+        local hui = getHui()
+        for _, root in ipairs(getExecRoots()) do
+                local ok, kids = pcall(function() return root:GetChildren() end)
+                if ok then
+                        for _, sg in ipairs(kids) do
+                                if sg:IsA("ScreenGui") and not seen[sg]
+                                        and not isHolder(sg, hui) and not isRobloxName(sg.Name) then
+                                        -- no coregui so o teste rapido, sem varrer o conteudo
+                                        local okA, res = pcall(isTarget, sg, root ~= CoreGui)
+                                        if okA and res then
+                                                seen[sg] = true
+                                                table.insert(found, sg)
+                                        end
+                                end
+                        end
+                end
+        end
+        return found
+end
+
+-- ocultar / mostrar
+local alive = true
 local hidden, busy = false, false
 local active = {}
 local handled = {}
 local hbConn = nil
 local addConns = {}
-local rr = 1
 
-local function setStatus(t) statusLbl.Text = t end
+local refreshUI = nil
+local flashMsg = nil
 
-local function snap(inst, top, md)
-	local e = { inst = inst, props = {}, vals = {}, top = top }
-	local names = {}
-	if inst:IsA("GuiObject") then
-		table.insert(names, "BackgroundTransparency")
-		if inst:IsA("ImageLabel") or inst:IsA("ImageButton") then
-			table.insert(names, "ImageTransparency")
-		end
-		if inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("TextBox") then
-			table.insert(names, "TextTransparency")
-			table.insert(names, "TextStrokeTransparency")
-		end
-	elseif inst:IsA("UIStroke") then
-		table.insert(names, "Transparency")
-	end
+local function snap(inst, top, withT)
+        local e = { inst = inst, props = {}, vals = {}, top = top }
 
-	for _, n in ipairs(names) do
-		local ok, v = pcall(function() return inst[n] end)
-		if ok and type(v) == "number" then
-			local nv = (md == "remover") and 1 or math.max(v, CAMO)
-			if nv ~= v then
-				e.props[n] = v
-				e.vals[n] = nv
-			end
-		end
-	end
+        if withT then
+                local names = {}
+                if inst:IsA("GuiObject") then
+                        table.insert(names, "BackgroundTransparency")
+                        if inst:IsA("ImageLabel") or inst:IsA("ImageButton") then
+                                table.insert(names, "ImageTransparency")
+                        end
+                        if inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("TextBox") then
+                                table.insert(names, "TextTransparency")
+                                table.insert(names, "TextStrokeTransparency")
+                        end
+                elseif inst:IsA("UIStroke") then
+                        table.insert(names, "Transparency")
+                end
+                for _, n in ipairs(names) do
+                        local ok, v = pcall(function() return inst[n] end)
+                        if ok and type(v) == "number" and v ~= 1 then
+                                e.props[n] = v
+                                e.vals[n] = 1
+                        end
+                end
+        end
 
-	if md == "remover" and top then
-		if inst:IsA("ScreenGui") then
-			local ok, v = pcall(function() return inst.Enabled end)
-			if ok then e.props.Enabled = v e.vals.Enabled = false end
-		elseif inst:IsA("GuiObject") then
-			local ok1, v1 = pcall(function() return inst.Visible end)
-			local ok2, v2 = pcall(function() return inst.Position end)
-			if ok1 then e.props.Visible = v1 e.vals.Visible = false end
-			if ok2 then e.props.Position = v2 e.vals.Position = FAR end
-		end
-	end
-	return e
+        if top then
+                if inst:IsA("ScreenGui") then
+                        local ok, v = pcall(function() return inst.Enabled end)
+                        if ok then e.props.Enabled = v e.vals.Enabled = false end
+                elseif inst:IsA("GuiObject") then
+                        local ok1, v1 = pcall(function() return inst.Visible end)
+                        local ok2, v2 = pcall(function() return inst.Position end)
+                        if ok1 then e.props.Visible = v1 e.vals.Visible = false end
+                        if ok2 then e.props.Position = v2 e.vals.Position = FAR end
+                end
+        end
+        return e
 end
 
-local function collectSG(sg, md, out)
-	local first = snap(sg, true, md)
-	if next(first.props) ~= nil then table.insert(out, first) end
+local function collectSG(sg, out)
+        local first = snap(sg, true, false)
+        if next(first.props) ~= nil then table.insert(out, first) end
 
-	local ok, desc = pcall(function() return sg:GetDescendants() end)
-	if not ok then return end
-	local limit = (md == "remover") and math.min(300, #desc) or #desc
-	for i = 1, limit do
-		local d = desc[i]
-		local okS, e = pcall(snap, d, (md == "remover") and d.Parent == sg, md)
-		if okS and next(e.props) ~= nil then table.insert(out, e) end
-		if i % 400 == 0 then task.wait() end
-	end
+        local ok, desc = pcall(function() return sg:GetDescendants() end)
+        if not ok then return end
+        for i, d in ipairs(desc) do
+                -- topo = screengui aninhado ou guiobject cujo pai nao e guiobject
+                local okT, top = pcall(function()
+                        if d:IsA("ScreenGui") then return true end
+                        return d:IsA("GuiObject") and not d.Parent:IsA("GuiObject")
+                end)
+                top = (okT and top) or false
+                if top or i <= 300 then
+                        local okS, e = pcall(snap, d, top, i <= 300)
+                        if okS and next(e.props) ~= nil then table.insert(out, e) end
+                end
+                if i % 400 == 0 then task.wait() end
+        end
 end
 
 local function apply(e)
-	for n, v in pairs(e.vals) do
-		local ok, cur = pcall(function() return e.inst[n] end)
-		if ok and cur ~= v then
-			pcall(function() e.inst[n] = v end)
-		end
-	end
+        for n, v in pairs(e.vals) do
+                local ok, cur = pcall(function() return e.inst[n] end)
+                if ok and cur ~= v then
+                        pcall(function() e.inst[n] = v end)
+                end
+        end
 end
 
 local function restore(e)
-	for n, v in pairs(e.props) do
-		pcall(function() e.inst[n] = v end)
-	end
+        for n, v in pairs(e.props) do
+                pcall(function() e.inst[n] = v end)
+        end
 end
 
 local function stopEnforce()
-	if hbConn then
-		pcall(function() hbConn:Disconnect() end)
-		hbConn = nil
-	end
-	for _, c in ipairs(addConns) do
-		pcall(function() c:Disconnect() end)
-	end
-	addConns = {}
+        if hbConn then
+                pcall(function() hbConn:Disconnect() end)
+                hbConn = nil
+        end
+        for _, c in ipairs(addConns) do
+                pcall(function() c:Disconnect() end)
+        end
+        addConns = {}
 end
 
 local function startEnforce()
-	local frames = 0
-	hbConn = RunService.Heartbeat:Connect(function()
-		if not hidden or busy then return end
-		frames += 1
-		if mode == "remover" then
-			local full = (frames % 30 == 0)
-			for _, e in ipairs(active) do
-				if e.top or full then apply(e) end
-			end
-		else
-			local n = #active
-			if n == 0 then return end
-			for _ = 1, CAMO_STEP do
-				if rr > n then rr = 1 end
-				apply(active[rr])
-				rr += 1
-			end
-		end
-	end)
+        local frames = 0
+        hbConn = RunService.Heartbeat:Connect(function()
+                if not hidden or busy then return end
+                frames += 1
+                local full = (frames % 30 == 0)
+                for _, e in ipairs(active) do
+                        if e.top or full then apply(e) end
+                end
+        end)
 
-	-- menus de scripts abertos depois também somem
-	for _, root in ipairs(getExecRoots()) do
-		local ok, c = pcall(function()
-			return root.ChildAdded:Connect(function(sg)
-				task.spawn(function()
-					task.wait(0.4)
-					if not hidden or busy or handled[sg] then return end
-					local okA, res = pcall(shouldHideNew, root, sg)
-					if okA and res then
-						handled[sg] = true
-						local add = {}
-						collectSG(sg, mode, add)
-						for _, e in ipairs(add) do
-							table.insert(active, e)
-							apply(e)
-						end
-					end
-				end)
-			end)
-		end)
-		if ok then table.insert(addConns, c) end
-	end
-end
-
-local function styleToggle()
-	if hidden then
-		toggleBtn.Text = "Mostrar"
-		tw(toggleBtn, { BackgroundColor3 = OK_GREEN }, 0.3, Enum.EasingStyle.Sine)
-		tw(logoStroke, { Color = OK_GREEN }, 0.3, Enum.EasingStyle.Sine)
-	else
-		toggleBtn.Text = "Ocultar"
-		tw(toggleBtn, { BackgroundColor3 = ACCENT }, 0.3, Enum.EasingStyle.Sine)
-		tw(logoStroke, { Color = ACCENT }, 0.3, Enum.EasingStyle.Sine)
-	end
+        -- menu aberto depois tambem some
+        for _, root in ipairs(getExecRoots()) do
+                local ok, c = pcall(function()
+                        return root.ChildAdded:Connect(function(sg)
+                                task.spawn(function()
+                                        task.wait(0.4)
+                                        if not hidden or busy or handled[sg] then return end
+                                        if not sg:IsA("ScreenGui") or isRobloxName(sg.Name) then return end
+                                        if isHolder(sg, getHui()) then return end
+                                        local okA, res = pcall(isTarget, sg, root ~= CoreGui)
+                                        if okA and res then
+                                                handled[sg] = true
+                                                local add = {}
+                                                collectSG(sg, add)
+                                                for _, e in ipairs(add) do
+                                                        table.insert(active, e)
+                                                        apply(e)
+                                                end
+                                        end
+                                end)
+                        end)
+                end)
+                if ok then table.insert(addConns, c) end
+        end
 end
 
 local function hideNow()
-	if busy or hidden then return end
-	busy = true
-	setStatus("Procurando scripts...")
-	task.spawn(function()
-		local sgs = findScripts()
-		if #sgs == 0 then
-			setStatus("Nenhum menu de script encontrado.")
-			busy = false
-			return
-		end
+        if busy or hidden then return end
+        busy = true
+        if refreshUI then refreshUI() end
+        task.spawn(function()
+                local ok = pcall(function()
+                        local okF, sgs = pcall(findTargets)
+                        if not okF then sgs = {} end
 
-		local count = #sgs
-		-- no modo camuflar este próprio script também entra na ocultação
-		-- (no modo remover ele fica visível, senão não dá para voltar)
-		if mode == "camuflar" then
-			table.insert(sgs, gui)
-		end
+                        local out = {}
+                        handled = {}
+                        for _, sg in ipairs(sgs) do
+                                handled[sg] = true
+                                collectSG(sg, out)
+                        end
 
-		local out = {}
-		handled = {}
-		for _, sg in ipairs(sgs) do
-			handled[sg] = true
-			collectSG(sg, mode, out)
-		end
+                        if #out == 0 then
+                                busy = false
+                                if flashMsg then flashMsg("Nenhum menu encontrado") end
+                                return
+                        end
 
-		if #out == 0 then
-			setStatus("Nada para alterar (já está oculto?)")
-			busy = false
-			return
-		end
+                        active = out
+                        for i, e in ipairs(active) do
+                                apply(e)
+                                if i % 400 == 0 then task.wait() end
+                        end
 
-		active = out
-		for i, e in ipairs(active) do
-			apply(e)
-			if i % 400 == 0 then task.wait() end
-		end
-
-		hidden = true
-		rr = 1
-		startEnforce()
-		styleToggle()
-		if mode == "camuflar" then
-			setStatus("Camuflados: " .. count .. " menu(s) + este script")
-		else
-			setStatus("Ocultos: " .. count .. " menu(s) de script")
-		end
-		busy = false
-	end)
+                        hidden = true
+                        startEnforce()
+                end)
+                if not ok and not hidden then
+                        -- deu erro no meio, volta tudo
+                        for _, e in ipairs(active) do restore(e) end
+                        active = {}
+                        handled = {}
+                end
+                busy = false
+                if refreshUI then refreshUI() end
+        end)
 end
 
-local function showNow(done)
-	if busy or not hidden then return end
-	busy = true
-	hidden = false
-	stopEnforce()
-	task.spawn(function()
-		for i, e in ipairs(active) do
-			restore(e)
-			if i % 400 == 0 then task.wait() end
-		end
-		active = {}
-		handled = {}
-		styleToggle()
-		setStatus("Scripts visíveis")
-		busy = false
-		if done then done() end
-	end)
+local function showNow()
+        if busy or not hidden then return end
+        busy = true
+        hidden = false
+        stopEnforce()
+        if refreshUI then refreshUI() end
+        task.spawn(function()
+                for i, e in ipairs(active) do
+                        restore(e)
+                        if i % 400 == 0 then task.wait() end
+                end
+                active = {}
+                handled = {}
+                busy = false
+                if refreshUI then refreshUI() end
+        end)
 end
 
-track(toggleBtn.MouseButton1Click:Connect(function()
-	setList(false)
-	if busy then return end
-	if hidden then showNow() else hideNow() end
-end))
-
----------------------------------------------------------------------
--- Dropdown de modo
----------------------------------------------------------------------
-local function refreshOptions()
-	tw(optRemover, { BackgroundColor3 = (mode == "remover") and ACCENT or ACCENT_DARK }, 0.2, Enum.EasingStyle.Sine)
-	tw(optCamo, { BackgroundColor3 = (mode == "camuflar") and ACCENT or ACCENT_DARK }, 0.2, Enum.EasingStyle.Sine)
-	modeBtn.Text = (mode == "remover") and "Remover da tela" or "Camuflar (opacidade baixa)"
+local function toggle()
+        if busy then return end
+        if hidden then showNow() else hideNow() end
 end
 
-track(modeBtn.MouseButton1Click:Connect(function()
-	setList(not listOpen)
-end))
+-- painel dentro da janela do tutorial
+local panel, panelMain, panelBg, panelTg = nil, nil, nil, nil
+local btn, question = nil, nil
+local panelConns = {}
+local flashText, flashUntil = nil, 0
 
-local function pickMode(m)
-	setList(false)
-	if m == mode then return end
-	mode = m
-	refreshOptions()
-	if hidden then
-		-- aplica o novo modo na hora
-		showNow(function() hideNow() end)
-	end
+refreshUI = function()
+        if not btn or not question or not btn.Parent then return end
+        local qText = hidden and "Drip menu oculto" or "Deseja ocultar o drip menu?"
+        local bText = hidden and "Mostrar" or "Sim"
+        local bCol = hidden and RED or GREEN
+        if busy then
+                bText = "..."
+                bCol = GREY
+        end
+        if flashText and os.clock() < flashUntil then
+                qText = flashText
+        end
+        question.Text = qText
+        btn.Text = bText
+        TweenService:Create(btn, TweenInfo.new(0.2), { BackgroundColor3 = bCol }):Play()
 end
 
-track(optRemover.MouseButton1Click:Connect(function() pickMode("remover") end))
-track(optCamo.MouseButton1Click:Connect(function() pickMode("camuflar") end))
-refreshOptions()
+flashMsg = function(t)
+        flashText = t
+        flashUntil = os.clock() + 2.5
+        refreshUI()
+        task.delay(2.6, function()
+                if alive then refreshUI() end
+        end)
+end
 
----------------------------------------------------------------------
--- Inicialização e limpeza
----------------------------------------------------------------------
+-- encaixa o painel embaixo do cartao da janela (so escala, acompanha a animacao)
+local function layout()
+        if not panel or not panel.Parent or not panelMain or not panelBg then return end
+        local ok = pcall(function()
+                local mA, bA = panelMain.AbsoluteSize, panelBg.AbsoluteSize
+                if mA.X < 1 or mA.Y < 1 or bA.X < 1 or bA.Y < 1 then return end
+                local rel = panelBg.AbsolutePosition - panelMain.AbsolutePosition
+                panel.Position = UDim2.new(
+                        rel.X / mA.X, 0,
+                        (rel.Y + bA.Y * (1 + PANEL_GAP)) / mA.Y, 0
+                )
+                panel.Size = UDim2.new(bA.X / mA.X, 0, (bA.Y * PANEL_HEIGHT) / mA.Y, 0)
+                panel.Visible = true
+        end)
+        return ok
+end
+
+local function destroyPanel()
+        for _, c in ipairs(panelConns) do
+                pcall(function() c:Disconnect() end)
+        end
+        panelConns = {}
+        if panel then
+                pcall(function() panel:Destroy() end)
+        end
+        panel, panelMain, panelBg, panelTg = nil, nil, nil, nil
+        btn, question = nil, nil
+end
+
+local function addPadding(parent, v)
+        local pad = Instance.new("UIPadding")
+        pad.PaddingTop = UDim.new(v, 0)
+        pad.PaddingBottom = UDim.new(v, 0)
+        pad.Parent = parent
+end
+
+local function buildPanel(tg, main, bg)
+        panelTg, panelMain, panelBg = tg, main, bg
+
+        local p = Instance.new("ImageLabel")
+        p.Name = tostring(math.random(100000, 999999))
+        p:SetAttribute(TAG, true)
+        p.BackgroundColor3 = Color3.fromRGB(16, 16, 24)
+        p.BackgroundTransparency = 0.05
+        p.BorderSizePixel = 0
+        p.Image = ""
+        -- copia o visual do Background do jogo
+        for _, n in ipairs({
+                "BackgroundColor3", "BackgroundTransparency", "Image", "ImageColor3",
+                "ImageTransparency", "ScaleType", "SliceCenter", "SliceScale", "ResampleMode",
+        }) do
+                pcall(function() p[n] = bg[n] end)
+        end
+        for _, cls in ipairs({ "UICorner", "UIStroke", "UIGradient" }) do
+                local ref = bg:FindFirstChildOfClass(cls)
+                if ref then
+                        pcall(function() ref:Clone().Parent = p end)
+                end
+        end
+        if not p:FindFirstChildOfClass("UICorner") then
+                local c = Instance.new("UICorner")
+                c.CornerRadius = UDim.new(0, 8)
+                c.Parent = p
+        end
+        p.ZIndex = 20
+        p.LayoutOrder = 9999
+        p.Visible = false
+        p.Size = UDim2.new(0.46, 0, 0.14, 0)
+        p.Position = UDim2.new(0.27, 0, 0.7, 0)
+
+        -- mesma fonte do titulo da janela
+        local ref = bg:FindFirstChild("Title", true)
+
+        local q = Instance.new("TextLabel")
+        q.BackgroundTransparency = 1
+        q.Position = UDim2.new(0.05, 0, 0.06, 0)
+        q.Size = UDim2.new(0.9, 0, 0.38, 0)
+        q.TextScaled = true
+        q.TextWrapped = true
+        q.TextColor3 = WHITE
+        q.Font = Enum.Font.GothamBold
+        q.Text = "Deseja ocultar o drip menu?"
+        q.ZIndex = 21
+        if ref and ref:IsA("TextLabel") then
+                pcall(function() q.FontFace = ref.FontFace end)
+        end
+        addPadding(q, 0.08)
+        q.Parent = p
+
+        local b = Instance.new("TextButton")
+        b.Position = UDim2.new(0.08, 0, 0.52, 0)
+        b.Size = UDim2.new(0.84, 0, 0.4, 0)
+        b.BackgroundColor3 = GREEN
+        b.BorderSizePixel = 0
+        b.AutoButtonColor = false
+        b.TextScaled = true
+        b.TextColor3 = WHITE
+        b.Font = Enum.Font.GothamBold
+        b.Text = "Sim"
+        b.ZIndex = 21
+        if ref and ref:IsA("TextLabel") then
+                pcall(function() b.FontFace = ref.FontFace end)
+        end
+        local bc = Instance.new("UICorner")
+        bc.CornerRadius = UDim.new(0.3, 0)
+        bc.Parent = b
+        addPadding(b, 0.14)
+        b.Parent = p
+
+        panel, question, btn = p, q, b
+        p.Parent = main
+
+        table.insert(panelConns, b.Activated:Connect(toggle))
+        table.insert(panelConns, main:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout))
+        table.insert(panelConns, bg:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout))
+        table.insert(panelConns, tg:GetPropertyChangedSignal("Enabled"):Connect(function()
+                layout()
+                task.delay(0.1, layout)
+        end))
+
+        refreshUI()
+        layout()
+end
+
+local function ensurePanel()
+        if panel and panel.Parent and panel:IsDescendantOf(game) then
+                layout()
+                return
+        end
+        if panel then destroyPanel() end
+
+        local pg = getPlayerGui()
+        local tg = pg and pg:FindFirstChild(TUTORIAL_GUI)
+        if not tg then return end
+        local main = tg:FindFirstChild(MAIN_NAME, true)
+        local bg = main and main:FindFirstChild(BG_NAME, true)
+        if main and bg then
+                buildPanel(tg, main, bg)
+        end
+end
+
+-- se a janela for recriada (respawn) o painel volta
 task.spawn(function()
-	local sgs = findScripts()
-	if #sgs > 0 then
-		setStatus("Detectados: " .. #sgs .. " menu(s) de script")
-		local arc = {}
-		for _, sg in ipairs(sgs) do
-			if hasArceusContent(sg) then table.insert(arc, sg) end
-		end
-		if #arc > 0 then pcall(findLogoImage, arc) end
-	else
-		setStatus("Nenhum menu de script detectado ainda")
-	end
+        while alive do
+                pcall(ensurePanel)
+                task.wait(0.25)
+        end
+end)
+
+-- aquece a deteccao pro primeiro clique nao demorar
+task.spawn(function()
+        pcall(findTargets)
 end)
 
 env.__OCS_CLEAN = function()
-	hidden = false
-	stopEnforce()
-	for _, e in ipairs(active) do restore(e) end
-	active = {}
-	for _, c in ipairs(conns) do
-		pcall(function() c:Disconnect() end)
-	end
-	pcall(function() gui:Destroy() end)
+        alive = false
+        hidden = false
+        stopEnforce()
+        for _, e in ipairs(active) do restore(e) end
+        active = {}
+        destroyPanel()
 end
