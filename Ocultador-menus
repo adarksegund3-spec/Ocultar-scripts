@@ -1,5 +1,6 @@
 -- OCULTAR SCRIPTS
 -- Criador: angel
+-- Versao: painel de ocultar dentro da "Loja"
 
 local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
@@ -9,14 +10,15 @@ local TweenService = game:GetService("TweenService")
 local TAG = "OCS_UI"
 local FAR = UDim2.new(10, 0, 10, 0)
 
--- janela do tutorial do jogo
-local TUTORIAL_GUI = "TutorialGui"
-local MAIN_NAME = "Main"
-local BG_NAME = "Background"
+-- nomes que identificam a Loja (em minusculo, aceita LOJA / Loja / loja)
+local SHOP_NAMES = { "loja" }
 
--- posicao e altura do painel (fracao da altura do Background)
-local PANEL_GAP = 0.05
-local PANEL_HEIGHT = 0.42
+-- posicao do painel dentro da Loja (escala do tamanho da Loja)
+local PANEL_POS = UDim2.new(0.05, 0, 0.8, 0)
+local PANEL_SIZE = UDim2.new(0.9, 0, 0.16, 0)
+-- se a Loja for um ScreenGui inteiro, usa este tamanho (centralizado embaixo)
+local PANEL_POS_SG = UDim2.new(0.3, 0, 0.82, 0)
+local PANEL_SIZE_SG = UDim2.new(0.4, 0, 0.14, 0)
 
 -- o que vai ser ocultado (nomes em minusculo)
 local DRIP_PREFIX = { "windui" }
@@ -76,11 +78,8 @@ do
         end
         if pg then
                 pcall(function()
-                        local tg = pg:FindFirstChild(TUTORIAL_GUI)
-                        if tg then
-                                for _, d in ipairs(tg:GetDescendants()) do
-                                        if d:GetAttribute(TAG) then d:Destroy() end
-                                end
+                        for _, d in ipairs(pg:GetDescendants()) do
+                                if d:GetAttribute(TAG) then d:Destroy() end
                         end
                 end)
         end
@@ -391,8 +390,8 @@ local function toggle()
         if hidden then showNow() else hideNow() end
 end
 
--- painel dentro da janela do tutorial
-local panel, panelMain, panelBg, panelTg = nil, nil, nil, nil
+-- painel dentro da Loja
+local panel = nil
 local btn, question = nil, nil
 local panelConns = {}
 local flashText, flashUntil = nil, 0
@@ -423,23 +422,6 @@ flashMsg = function(t)
         end)
 end
 
--- encaixa o painel embaixo do cartao da janela (so escala, acompanha a animacao)
-local function layout()
-        if not panel or not panel.Parent or not panelMain or not panelBg then return end
-        local ok = pcall(function()
-                local mA, bA = panelMain.AbsoluteSize, panelBg.AbsoluteSize
-                if mA.X < 1 or mA.Y < 1 or bA.X < 1 or bA.Y < 1 then return end
-                local rel = panelBg.AbsolutePosition - panelMain.AbsolutePosition
-                panel.Position = UDim2.new(
-                        rel.X / mA.X, 0,
-                        (rel.Y + bA.Y * (1 + PANEL_GAP)) / mA.Y, 0
-                )
-                panel.Size = UDim2.new(bA.X / mA.X, 0, (bA.Y * PANEL_HEIGHT) / mA.Y, 0)
-                panel.Visible = true
-        end)
-        return ok
-end
-
 local function destroyPanel()
         for _, c in ipairs(panelConns) do
                 pcall(function() c:Disconnect() end)
@@ -448,8 +430,7 @@ local function destroyPanel()
         if panel then
                 pcall(function() panel:Destroy() end)
         end
-        panel, panelMain, panelBg, panelTg = nil, nil, nil, nil
-        btn, question = nil, nil
+        panel, btn, question = nil, nil, nil
 end
 
 local function addPadding(parent, v)
@@ -459,42 +440,88 @@ local function addPadding(parent, v)
         pad.Parent = parent
 end
 
-local function buildPanel(tg, main, bg)
-        panelTg, panelMain, panelBg = tg, main, bg
+local function isShopName(s)
+        s = tostring(s):lower()
+        for _, n in ipairs(SHOP_NAMES) do
+                if s == n then return true end
+        end
+        return false
+end
 
-        local p = Instance.new("ImageLabel")
+-- acha a Loja no PlayerGui: prefere ScreenGui/frame com esse nome, depois botao
+local function findShop()
+        local pg = getPlayerGui()
+        if not pg then return nil end
+        local fallback = nil
+        local okD, desc = pcall(function() return pg:GetDescendants() end)
+        if not okD then return nil end
+        for i, d in ipairs(desc) do
+                local okC, res = pcall(function()
+                        if d:GetAttribute(TAG) then return nil end
+                        if not (d:IsA("GuiObject") or d:IsA("ScreenGui")) then return nil end
+                        if isShopName(d.Name) then
+                                return d:IsA("GuiButton") and "fallback" or "best"
+                        end
+                        if d:IsA("TextButton") and isShopName(d.Text) then
+                                return "fallback"
+                        end
+                        return nil
+                end)
+                if okC and res == "best" then
+                        return d
+                elseif okC and res == "fallback" and not fallback then
+                        fallback = d
+                end
+                if i % 1500 == 0 then task.wait() end
+        end
+        return fallback
+end
+
+-- se o pai tem lista/grade, sobe um nivel pra nao bagunçar o layout da Loja
+local function pickHost(shop)
+        local host = shop
+        for _ = 1, 3 do
+                if host:FindFirstChildOfClass("UIListLayout")
+                        or host:FindFirstChildOfClass("UIGridLayout")
+                        or host:FindFirstChildOfClass("UIPageLayout") then
+                        local par = host.Parent
+                        if par and (par:IsA("GuiObject") or par:IsA("ScreenGui")) then
+                                host = par
+                        else
+                                break
+                        end
+                else
+                        break
+                end
+        end
+        return host
+end
+
+local function buildPanel(host)
+        local isSG = host:IsA("ScreenGui")
+
+        local p = Instance.new("Frame")
         p.Name = tostring(math.random(100000, 999999))
         p:SetAttribute(TAG, true)
         p.BackgroundColor3 = Color3.fromRGB(16, 16, 24)
         p.BackgroundTransparency = 0.05
         p.BorderSizePixel = 0
-        p.Image = ""
-        -- copia o visual do Background do jogo
-        for _, n in ipairs({
-                "BackgroundColor3", "BackgroundTransparency", "Image", "ImageColor3",
-                "ImageTransparency", "ScaleType", "SliceCenter", "SliceScale", "ResampleMode",
-        }) do
-                pcall(function() p[n] = bg[n] end)
-        end
-        for _, cls in ipairs({ "UICorner", "UIStroke", "UIGradient" }) do
-                local ref = bg:FindFirstChildOfClass(cls)
-                if ref then
-                        pcall(function() ref:Clone().Parent = p end)
-                end
-        end
-        if not p:FindFirstChildOfClass("UICorner") then
-                local c = Instance.new("UICorner")
-                c.CornerRadius = UDim.new(0, 8)
-                c.Parent = p
-        end
-        p.ZIndex = 20
-        p.LayoutOrder = 9999
-        p.Visible = false
-        p.Size = UDim2.new(0.46, 0, 0.14, 0)
-        p.Position = UDim2.new(0.27, 0, 0.7, 0)
+        p.ZIndex = 50
+        p.Position = isSG and PANEL_POS_SG or PANEL_POS
+        p.Size = isSG and PANEL_SIZE_SG or PANEL_SIZE
 
-        -- mesma fonte do titulo da janela
-        local ref = bg:FindFirstChild("Title", true)
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 8)
+        c.Parent = p
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromRGB(60, 60, 80)
+        stroke.Thickness = 1
+        stroke.Parent = p
+
+        local sizeC = Instance.new("UISizeConstraint")
+        sizeC.MinSize = Vector2.new(180, 90)
+        sizeC.Parent = p
 
         local q = Instance.new("TextLabel")
         q.BackgroundTransparency = 1
@@ -505,10 +532,7 @@ local function buildPanel(tg, main, bg)
         q.TextColor3 = WHITE
         q.Font = Enum.Font.GothamBold
         q.Text = "Deseja ocultar o drip menu?"
-        q.ZIndex = 21
-        if ref and ref:IsA("TextLabel") then
-                pcall(function() q.FontFace = ref.FontFace end)
-        end
+        q.ZIndex = 51
         addPadding(q, 0.08)
         q.Parent = p
 
@@ -522,10 +546,7 @@ local function buildPanel(tg, main, bg)
         b.TextColor3 = WHITE
         b.Font = Enum.Font.GothamBold
         b.Text = "Sim"
-        b.ZIndex = 21
-        if ref and ref:IsA("TextLabel") then
-                pcall(function() b.FontFace = ref.FontFace end)
-        end
+        b.ZIndex = 51
         local bc = Instance.new("UICorner")
         bc.CornerRadius = UDim.new(0.3, 0)
         bc.Parent = b
@@ -533,42 +554,28 @@ local function buildPanel(tg, main, bg)
         b.Parent = p
 
         panel, question, btn = p, q, b
-        p.Parent = main
+        p.Parent = host
 
         table.insert(panelConns, b.Activated:Connect(toggle))
-        table.insert(panelConns, main:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout))
-        table.insert(panelConns, bg:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout))
-        table.insert(panelConns, tg:GetPropertyChangedSignal("Enabled"):Connect(function()
-                layout()
-                task.delay(0.1, layout)
-        end))
-
         refreshUI()
-        layout()
 end
 
 local function ensurePanel()
         if panel and panel.Parent and panel:IsDescendantOf(game) then
-                layout()
                 return
         end
         if panel then destroyPanel() end
 
-        local pg = getPlayerGui()
-        local tg = pg and pg:FindFirstChild(TUTORIAL_GUI)
-        if not tg then return end
-        local main = tg:FindFirstChild(MAIN_NAME, true)
-        local bg = main and main:FindFirstChild(BG_NAME, true)
-        if main and bg then
-                buildPanel(tg, main, bg)
-        end
+        local shop = findShop()
+        if not shop then return end
+        buildPanel(pickHost(shop))
 end
 
--- se a janela for recriada (respawn) o painel volta
+-- se a Loja for recriada (respawn / troca de tela) o painel volta
 task.spawn(function()
         while alive do
                 pcall(ensurePanel)
-                task.wait(0.25)
+                task.wait(1)
         end
 end)
 
